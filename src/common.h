@@ -31,3 +31,12 @@ SOFTWARE.
 #include "iris/iris_coroutine.h"
 #include "iris/iris_dispatcher.h"
 #include "iris/iris_lua.h"
+
+namespace iris {
+	using lua_async_worker_t = iris_async_worker_t<>;
+	using lua_warp_t = iris_warp_t<lua_async_worker_t>;
+	using lua_t = iris_lua_t<lua_warp_t>;
+	template <typename type_t>
+	using lua_coroutine_t = iris_coroutine_t<type_t>;
+}
+
