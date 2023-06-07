@@ -1,5 +1,10 @@
 #include "lua_co_await.h"
 
+// register tutorial types, remove it freely
+#include "tutorial/tutorial_async.h"
+#include "tutorial/tutorial_quota.h"
+#include "tutorial/tutorial_warp.h"
+
 namespace iris {
 	void lua_co_await_t::lua_registar(lua_t&& lua) {
 		lua.define<&lua_co_await_t::get_version>("get_version");
@@ -7,9 +12,34 @@ namespace iris {
 		lua.define<&lua_co_await_t::terminate>("terminate");
 		lua.define<&lua_co_await_t::poll>("poll");
 		lua.define<&lua_co_await_t::yield>("yield");
+		lua.define("tutorial_async", lua.make_type<tutorial_async_t>("tutorial_async"));
+		lua.define("tutorial_quota", lua.make_type<tutorial_quota_t>("tutorial_quota"));
+		lua.define("tutorial_warp", lua.make_type<tutorial_warp_t>("tutorial_warp"));
+		lua.define("run_tutorials", lua.load("local co_await = ... \n\
+local complete_count = 0 \n\
+coroutine.wrap(function () \n\
+	co_await.tutorial_async.create():run() \n\
+	print('complete async') \n\
+	complete_count = complete_count + 1 \n\
+end)() \n\
+coroutine.wrap(function () \n\
+	--co_await.tutorial_quota.create():run() \n\
+	print('complete quota') \n\
+	complete_count = complete_count + 1 \n\
+end)() \n\
+coroutine.wrap(function () \n\
+	--co_await.tutorial_warp.create():run() \n\
+	print('complete warp') \n\
+	complete_count = complete_count + 1 \n\
+end)() \n\
+while complete_count < 3 do \n\
+	co_await:poll(1000) \n\
+end \n\
+print('all completed')\n\
+"));
 	}
 
-	lua_co_await_t::lua_co_await_t() noexcept {}
+	lua_co_await_t::lua_co_await_t() {}
 	lua_co_await_t::~lua_co_await_t() noexcept {
 		terminate();
 	}
@@ -57,7 +87,7 @@ namespace iris {
 			async_worker.join();
 
 			// join with finalize
-			while (!main_warp->join<true, true>()) {}
+			while (!main_warp->join()) {}
 			main_warp->yield();
 			main_warp = nullptr;
 
@@ -67,10 +97,17 @@ namespace iris {
 		}
 	}
 
-	bool lua_co_await_t::poll() {
+	bool lua_co_await_t::poll(size_t delayInMilliseconds) {
 		auto guard = write_fence();
 		if (main_warp) {
-			return main_warp->join();
+			if (main_warp->join()) {
+				return true;
+			} else if (delayInMilliseconds == 0) {
+				return false;
+			} else {
+				async_worker.poll_delay(0, delayInMilliseconds);
+				return main_warp->join();
+			}
 		} else {
 			return false;
 		}
