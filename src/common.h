@@ -36,7 +36,12 @@ namespace iris {
 	using lua_async_worker_t = iris_async_worker_t<>;
 	using lua_warp_t = iris_warp_t<lua_async_worker_t>;
 	using lua_t = iris_lua_t<lua_warp_t>;
+	using lua_ref_t = iris_lua_t<lua_warp_t>::ref_t;
+	template <typename type_t>
+	using lua_refptr_t = iris_lua_t<lua_warp_t>::template refptr_t<type_t>;
 	template <typename type_t>
 	using lua_coroutine_t = iris_coroutine_t<type_t>;
+	using lua_quota_t = iris_quota_t<size_t, 1>;
+	using lua_quota_queue_t = iris_quota_queue_t<lua_quota_t, lua_warp_t>;
 }
 

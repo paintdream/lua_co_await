@@ -31,6 +31,7 @@ SOFTWARE.
 
 #include "iris_common.h"
 #include <array>
+#include <optional>
 
 extern "C" {
 #if !USE_LUA_LIBRARY
@@ -101,7 +102,8 @@ namespace iris {
 			}
 
 			template <typename value_t>
-			value_t as(lua_State* L) const {
+			value_t as(iris_lua_t lua) const {
+				lua_State* L = lua.get_state();
 				stack_guard_t stack_guard(L);
 
 				push_variable(L, *this);
@@ -112,25 +114,35 @@ namespace iris {
 			}
 
 			template <typename value_t = ref_t, typename key_t>
-			value_t get(lua_State* L, key_t&& key) const {
+			std::optional<value_t> get(iris_lua_t lua, key_t&& key) const {
+				lua_State* L = lua.get_state();
 				stack_guard_t stack_guard(L);
 
 				push_variable(L, *this);
 				if (lua_istable(L, -1)) {
 					push_variable(L, std::forward<key_t>(key));
+#if LUA_VERSION_NUM <= 502
 					lua_rawget(L, -2);
-					value_t ret = get_variable<value_t>(L, -1);
-					lua_pop(L, 2);
-
-					return ret;
+					if (lua_type(L, -1) != LUA_TNIL) {
+#else
+					if (lua_rawget(L, -2) != LUA_TNIL) {
+#endif
+						value_t ret = get_variable<value_t>(L, -1);
+						lua_pop(L, 2);
+						return ret;
+					} else {
+						lua_pop(L, 2);
+						return std::nullopt;
+					}
 				} else {
 					lua_pop(L, 1);
-					return value_t();
+					return std::nullopt;
 				}
 			}
 
 			template <typename key_t, typename value_t>
-			void set(lua_State* L, key_t&& key, value_t&& value) const {
+			void set(iris_lua_t lua, key_t&& key, value_t&& value) const {
+				lua_State* L = lua.get_state();
 				stack_guard_t stack_guard(L);
 
 				push_variable(L, *this);
@@ -144,7 +156,8 @@ namespace iris {
 			}
 
 			template <typename key_t, typename value_t, typename func_t>
-			void for_each(lua_State* L, func_t&& func) const {
+			void for_each(iris_lua_t lua, func_t&& func) const {
+				lua_State* L = lua.get_state();
 				stack_guard_t stack_guard(L);
 				push_variable(L, *this);
 
@@ -161,7 +174,8 @@ namespace iris {
 				lua_pop(L, 1);
 			}
 
-			size_t size(lua_State* L) const {
+			size_t size(iris_lua_t lua) const {
+				lua_State* L = lua.get_state();
 				stack_guard_t stack_guard(L);
 
 				push_variable(L, *this);
@@ -231,7 +245,7 @@ namespace iris {
 			refguard_t(lua_State* L, args_t&... r) noexcept : state(L), refs{ &r... } {}
 			~refguard_t() noexcept {
 				for (auto&& r : refs) {
-					iris_lua_t::deref(state, *r);
+					iris_lua_t::deref(state, std::move(*r));
 				}
 			}
 
@@ -293,7 +307,7 @@ namespace iris {
 
 		// register a new type, taking registar from &type_t::lua_registar by default, and you could also specify your own registar.
 		template <typename type_t, int user_value_count = 0, auto registar = has_registar<type_t>::get_registar(), typename... args_t>
-		ref_t make_type(std::string_view name, args_t&... args) {
+		ref_t make_type(std::string_view name, args_t&&... args) {
 			auto guard = write_fence();
 
 			lua_State* L = state;
@@ -322,9 +336,8 @@ namespace iris {
 			push_variable(L, "create");
 			lua_pushvalue(L, -2);
 
-			// pass constructor arguments by references
-			push_argument_references(L, args...);
-			lua_pushcclosure(L, &iris_lua_t::create_object<type_t, user_value_count, args_t...>, 1 + sizeof...(args));
+			push_arguments(L, std::forward<args_t>(args)...);
+			lua_pushcclosure(L, &iris_lua_t::create_object<type_t, user_value_count, std::remove_reference_t<args_t>...>, 1 + sizeof...(args));
 			lua_rawset(L, -3);
 
 			// call custom registar if needed
@@ -343,7 +356,7 @@ namespace iris {
 
 			push_variable(L, r);
 			lua_setglobal(L, name.data());
-			deref(L, r);
+			deref(L, std::move(r));
 		}
 
 		// define a variable by value
@@ -389,9 +402,9 @@ namespace iris {
 		}
 
 		// dereference a ref
-		void deref(ref_t& r) noexcept {
+		void deref(ref_t&& r) noexcept {
 			auto guard = write_fence();
-			deref(state, r);
+			deref(state, std::move(r));
 		}
 
 		// call function in protect mode
@@ -431,7 +444,7 @@ namespace iris {
 		}
 
 	protected:
-		static void deref(lua_State* L, ref_t& r) noexcept {
+		static void deref(lua_State* L, ref_t&& r) noexcept {
 			if (r.value != LUA_REFNIL) {
 				luaL_unref(L, LUA_REGISTRYINDEX, r.value);
 				r.value = LUA_REFNIL;
@@ -445,15 +458,7 @@ namespace iris {
 			push_arguments(L, std::forward<args_t>(args)...);
 		}
 
-		static void push_argument_references(lua_State* L) {}
-		template <typename first_t, typename... args_t>
-		static void push_argument_references(lua_State* L, first_t& first, args_t&... args) {
-			lua_pushlightuserdata(L, const_cast<void*>(static_cast<const void*>(&first)));
-			push_argument_references(L, std::forward<args_t>(args)...);
-		}
-
 		// four specs for [const][noexcept] method definition
-
 		template <auto method, typename key_t, typename return_t, typename type_t, typename... args_t>
 		static void define_method(lua_State* L, key_t&& key, return_t(type_t::*)(args_t...)) {
 			define_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, key_t, return_t, required_t<type_t*>&&, args_t...>(L, std::forward<key_t>(key));
@@ -534,9 +539,9 @@ namespace iris {
 		}
 
 		// pass argument by upvalues
-		template <typename type_t, typename... args_t, size_t... k>
+		template <typename type_t, typename args_tuple_t, size_t... k>
 		static void invoke_create(type_t* p, lua_State* L, std::index_sequence<k...>) {
-			new (p) type_t(*reinterpret_cast<args_t*>(lua_touserdata(L, lua_upvalueindex(2 + int(k))))...);
+			new (p) type_t(get_variable<std::tuple_element_t<k, args_tuple_t>>(L, lua_upvalueindex(2 + int(k)))...);
 		}
 
 		// create a lua managed object
@@ -544,7 +549,7 @@ namespace iris {
 		static int create_object(lua_State* L) {
 			stack_guard_t guard(L, 1);
 			type_t* p = reinterpret_cast<type_t*>(lua_newuserdatauv(L, sizeof(type_t), user_value_count));
-			invoke_create<type_t, args_t...>(p, L, std::make_index_sequence<sizeof...(args_t)>());
+			invoke_create<type_t, std::tuple<args_t...>>(p, L, std::make_index_sequence<sizeof...(args_t)>());
 			lua_pushvalue(L, lua_upvalueindex(1));
 			lua_setmetatable(L, -2);
 
@@ -579,13 +584,15 @@ namespace iris {
 			using value_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<type_t>>>;
 			stack_guard_t guard(L);
 
-			if constexpr (std::is_base_of_v<ref_t, value_t>) {
+			if constexpr (iris_is_reference_wrapper_v<type_t>) {
+				return std::ref(*reinterpret_cast<typename type_t::type*>(lua_touserdata(L, index)));
+			} else if constexpr (std::is_base_of_v<ref_t, value_t>) {
 				using internal_type_t = typename value_t::internal_type_t;
 				if constexpr (!std::is_void_v<internal_type_t>) {
 					auto internal_value = get_variable<internal_type_t, skip_checks>(L, index);
 					if (internal_value) {
 						lua_pushvalue(L, index);
-						return value_t(luaL_ref(L, LUA_REGISTRYINDEX), internal_value);
+						return value_t(luaL_ref(L, LUA_REGISTRYINDEX), std::move(internal_value));
 					} else {
 						return value_t();
 					}
@@ -677,9 +684,9 @@ namespace iris {
 				return reinterpret_cast<type_t>(lua_touserdata(L, index));
 			} else if constexpr (std::is_base_of_v<require_base_t, value_t>) {
 				return get_variable<typename value_t::internal_type_t, true>(L, index);
+			} else {
+				return value_t();
 			}
-
-			return value_t();
 		}
 
 		// invoke C++ function from lua stack
@@ -710,13 +717,19 @@ namespace iris {
 			using value_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<first_t>>>;
 			if constexpr (std::is_base_of_v<require_base_t, value_t>) {
 				using internal_type_t = typename value_t::internal_type_t;
-				auto var = get_variable<internal_type_t>(L, index);
-				if (!var) {
-					luaL_error(L, "Required parameter %d of type %s is invalid.\n", index, typeid(first_t).name());
-				}
+				bool check_result = false;
+				do {
+					// make sure that var destroyed before luaL_error
+					auto var = get_variable<internal_type_t>(L, index);
+					check_result = var;
 
-				if constexpr (std::is_base_of_v<ref_t, internal_type_t>) {
-					deref(L, var);
+					if constexpr (std::is_base_of_v<ref_t, internal_type_t>) {
+						deref(L, std::move(var));
+					}
+				} while (false);
+
+				if (!check_result) {
+					luaL_error(L, "Required parameter %d of type %s is invalid.\n", index, typeid(first_t).name());
 				}
 			}
 
@@ -749,6 +762,11 @@ namespace iris {
 				}
 #endif
 				void* yield_mark = static_cast<void*>(&coroutine);
+
+				// save current thread to registry in case of gc
+				lua_pushthread(L);
+				lua_pushlightuserdata(L, yield_mark);
+				lua_settable(L, LUA_REGISTRYINDEX);
 
 				if constexpr (!std::is_void_v<return_t>) {
 					coroutine.complete([=](return_t&& value) {
@@ -785,6 +803,10 @@ namespace iris {
 		}
 
 		static void coroutine_continuation(lua_State* L) {
+			lua_pushthread(L);
+			lua_pushnil(L);
+			lua_settable(L, LUA_REGISTRYINDEX);
+
 			if (lua_status(L) == LUA_YIELD) {
 				lua_pop(L, 1);
 #if LUA_VERSION_NUM <= 501
@@ -861,11 +883,13 @@ namespace iris {
 			using value_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<type_t>>>;
 			stack_guard_t guard(L, 1);
 
-			if constexpr (std::is_base_of_v<ref_t, value_t>) {
+			if constexpr (iris_is_reference_wrapper_v<value_t>) {
+				lua_pushlightuserdata(L, const_cast<void*>(reinterpret_cast<const void*>(&variable.get())));
+			} else if constexpr (std::is_base_of_v<ref_t, value_t>) {
 				lua_rawgeti(L, LUA_REGISTRYINDEX, variable.value);
 				// deference if it's never used
 				if constexpr (std::is_rvalue_reference_v<type_t&&>) {
-					deref(L, variable);
+					deref(L, std::move(variable));
 				}
 			} else if constexpr (iris_lua_convert_t<value_t>::value) {
 				iris_lua_convert_t<value_t>::to_lua(L, std::forward<type_t>(variable));

@@ -279,7 +279,7 @@ namespace iris {
 
 		~iris_warp_t() noexcept {
 			// a warp cannot be destructed in its context
-			assert(get_current_warp_internal() == nullptr);
+			assert(get_current_warp_internal() != this);
 
 			// execute remaining tasks on destruction
 			while (!join<true, true>()) {}
@@ -338,7 +338,7 @@ namespace iris {
 
 				return true;
 			} else {
-				assert(get_current_warp_internal() == nullptr || *exp == nullptr);
+				assert(get_current_warp_internal() == nullptr || exp == nullptr || *exp == nullptr);
 				return false;
 			}
 		}

@@ -10,7 +10,14 @@ namespace iris {
 	public:
 		static void lua_registar(lua_t&& lua);
 
-		tutorial_warp_t();
+		tutorial_warp_t(lua_async_worker_t& async_worker);
 		~tutorial_warp_t() noexcept;
+
+		lua_coroutine_t<void> pipeline();
+
+	protected:
+		lua_warp_t stage_warp;
+		int warp_variable = 0;
+		int free_variable = 0;
 	};
 }

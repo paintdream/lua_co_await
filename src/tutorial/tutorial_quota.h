@@ -10,7 +10,15 @@ namespace iris {
 	public:
 		static void lua_registar(lua_t&& lua);
 
-		tutorial_quota_t();
+		tutorial_quota_t(lua_async_worker_t& async_worker, size_t capacity);
 		~tutorial_quota_t() noexcept;
+
+		lua_coroutine_t<void> work(size_t cost);
+		size_t get_remaining() const noexcept;
+
+	protected:
+		std::atomic<size_t> quantity;
+		lua_quota_t quota;
+		lua_quota_queue_t quota_queue;
 	};
 }
