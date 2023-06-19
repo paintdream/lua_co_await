@@ -14,8 +14,14 @@ print('[tutorial_async] wait complete')\n"));
 	}
 
 	lua_coroutine_t<void> tutorial_async_t::wait(size_t millseconds) {
+		// switch to any worker thread of thread poll, without taking any warps
+		// return the current warp before switching
 		lua_warp_t* current = co_await iris_switch(static_cast<lua_warp_t*>(nullptr));
+
+		// pretend doing some works
 		std::this_thread::sleep_for(std::chrono::milliseconds(millseconds));
+
+		// finished, just go back to the original warp
 		co_await iris_switch(current);
 	}
 }

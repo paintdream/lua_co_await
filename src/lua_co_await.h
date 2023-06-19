@@ -18,6 +18,7 @@ namespace iris {
 		bool terminate() noexcept;
 		bool poll(size_t delayInMilliseonds);
 
+		// examples
 		lua_ref_t tutorial_binding(lua_t&& lua);
 		lua_ref_t tutorial_async(lua_t&& lua);
 		lua_ref_t tutorial_warp(lua_t&& lua);

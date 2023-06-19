@@ -38,8 +38,12 @@ print('[tutorial_quota] end working')\n"));
 	}
 
 	lua_coroutine_t<void> tutorial_quota_t::work(size_t cost) {
+		// first, switch to any worker in thread poll
 		lua_warp_t* current = co_await iris_switch(static_cast<lua_warp_t*>(nullptr));
+		// acquire quota from quota_queue
+		// co_await will not return until quota is availble and acquired successfully
 		auto occupy = co_await quota_queue.guard({ cost });
+
 		// simulate working
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		co_await iris_switch(current);

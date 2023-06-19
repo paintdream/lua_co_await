@@ -57,6 +57,7 @@ print('[tutorial_binding] complete!')\n"));
 	tutorial_binding_t::~tutorial_binding_t() noexcept {
 	}
 
+	// basic types and compound type of them are supported naturally
 	void tutorial_binding_t::init(int int_param, float float_param, double double_param, std::string_view string_param, const std::vector<std::string>& string_vector_param, std::unordered_map<std::string, int>&& string_int_map_param) {
 		int_value = int_param;
 		float_value = float_param;
@@ -66,6 +67,7 @@ print('[tutorial_binding] complete!')\n"));
 		string_int_map_value = std::move(string_int_map_param);
 	}
 
+	// you can use refptr_t<T> to acquire a struct/class instance and holding its lifetime by a reference at the same time
 	void tutorial_binding_t::copy(lua_t&& lua, lua_refptr_t<tutorial_binding_t>&& rhs) {
 		if (rhs) {
 			int_value = rhs->int_value;
@@ -77,9 +79,14 @@ print('[tutorial_binding] complete!')\n"));
 
 			// we should deref lua_refptr_t<T> manually
 			lua.deref(std::move(rhs));
+
+			// if you want to save it somewhere, just try:
+			// other_value = std::move(rhs);
+			// then the instance will be held by `other_value` now.
 		}
 	}
 
+	// or you can use T* to take it temporarily
 	void tutorial_binding_t::copy_static(lua_t&& lua, lua_refptr_t<tutorial_binding_t>&& lhs, tutorial_binding_t* rhs) {
 		if (lhs && rhs != nullptr) {
 			tutorial_binding_t& self = *lhs.get();
@@ -92,12 +99,12 @@ print('[tutorial_binding] complete!')\n"));
 			self.string_vector_value = other.string_vector_value;
 			self.string_int_map_value = other.string_int_map_value;
 
-			// we should deref lua_refptr_t<T> manually
 			lua.deref(std::move(lhs));
 		}
 	}
 
 	void tutorial_binding_t::load(lua_t&& lua, lua_t::ref_t&& param) {
+		// ref_t::get returns a std::optional<> value
 		if (auto value = param.get<int>(lua, "int_value")) {
 			int_value = *value;
 		}

@@ -36,6 +36,7 @@ print('[tutorial_warp] end pipeline')\n"));
 	}
 
 	lua_coroutine_t<void> tutorial_warp_t::pipeline() {
+		// switch to stage_warp
 		lua_warp_t* current = co_await iris_switch(&stage_warp);
 
 		// operations on `warp_variable` will be executed on only one thread at the same time!
@@ -46,6 +47,7 @@ print('[tutorial_warp] end pipeline')\n"));
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		warp_variable = warp_value - 1;
 
+		// switch to any worker of thread poll
 		co_await iris_switch(static_cast<lua_warp_t*>(nullptr));
 
 		// operations on `free` may be executed on multiple threads at the same time!
@@ -56,6 +58,7 @@ print('[tutorial_warp] end pipeline')\n"));
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 		free_variable = free_value - 1;
 
+		// don't forget to switch back!
 		co_await iris_switch(current);
 	}
 }

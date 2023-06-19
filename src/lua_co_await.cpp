@@ -1,6 +1,10 @@
 #include "lua_co_await.h"
 
 // register tutorial types, remove it freely
+// to run tutorial, just launch the lua console, type:
+// require("lua_co_await").create():run_tutorials()
+//
+
 #include "tutorial/tutorial_binding.h"
 #include "tutorial/tutorial_async.h"
 #include "tutorial/tutorial_quota.h"
@@ -21,6 +25,7 @@ namespace iris {
 
 	lua_co_await_t::lua_co_await_t() {}
 	lua_co_await_t::~lua_co_await_t() noexcept {
+		// force terminate on destructing
 		terminate();
 	}
 
@@ -54,14 +59,18 @@ namespace iris {
 
 	bool lua_co_await_t::terminate() noexcept {
 		if (async_worker != nullptr) {
+			// cleanup threadlocal worker state
 			lua_async_worker_t::get_current() = nullptr;
 			lua_async_worker_t::get_current_thread_index_internal() = ~(size_t)0;
 
+			// notify terminate and wait all threads to exit
 			async_worker->terminate();
 			async_worker->join();
 
-			// join with finalize
-			while (!main_warp->join()) {}
+			// join with finalize, executing remaining warp tasks (if any)
+			while (!main_warp->join<true, true>()) {}
+
+			// cleanup warp data
 			main_warp->yield();
 			main_warp = nullptr;
 			async_worker = nullptr;
@@ -74,13 +83,17 @@ namespace iris {
 
 	bool lua_co_await_t::poll(size_t delayInMilliseconds) {
 		auto guard = write_fence();
+		// try to poll tasks of main_warp, also poll other tasks in given time if there is no task in main_warp.
+
 		if (async_worker != nullptr && main_warp != nullptr) {
+			// try poll
 			if (main_warp->join()) {
 				return true;
 			} else if (delayInMilliseconds == 0) {
 				return false;
 			} else {
 				async_worker->poll_delay(0, delayInMilliseconds);
+				// try poll again
 				return main_warp->join();
 			}
 		} else {
@@ -109,7 +122,7 @@ namespace iris {
 
 	void lua_co_await_t::run_tutorials(lua_refptr_t<lua_co_await_t>&& self, lua_t&& lua) {
 		lua.call<void>(lua.load("local co_await = ... \n\
-co_await:start(1) \n\
+co_await:start(4) \n\
 co_await:tutorial_binding().create():run() \n\
 local complete_count = 0 \n\
 coroutine.wrap(function () \n\
