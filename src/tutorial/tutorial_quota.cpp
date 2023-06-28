@@ -29,12 +29,12 @@ end \n\
 print('[tutorial_quota] end working')\n"));
 	}
 
-	tutorial_quota_t::tutorial_quota_t(lua_async_worker_t& async_worker, size_t capacity) : quantity(capacity), quota(quantity), quota_queue(async_worker, quota) {}
+	tutorial_quota_t::tutorial_quota_t(lua_async_worker_t& async_worker, size_t capacity) : quota({ capacity }), quota_queue(async_worker, quota) {}
 	tutorial_quota_t::~tutorial_quota_t() noexcept {
 	}
 
 	size_t tutorial_quota_t::get_remaining() const noexcept {
-		return quantity.load(std::memory_order_acquire);
+		return quota.get()[0];
 	}
 
 	lua_coroutine_t<void> tutorial_quota_t::work(size_t cost) {

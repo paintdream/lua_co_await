@@ -17,7 +17,6 @@ namespace iris {
 		size_t get_remaining() const noexcept;
 
 	protected:
-		std::atomic<size_t> quantity;
 		lua_quota_t quota;
 		lua_quota_queue_t quota_queue;
 	};
