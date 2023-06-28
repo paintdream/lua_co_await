@@ -43,9 +43,7 @@ namespace iris {
 			async_worker->resize(thread_count);
 			// add current thread as an external worker
 			size_t thread_index = async_worker->append(std::thread());
-			lua_async_worker_t::get_current() = async_worker.get();
-			lua_async_worker_t::get_current_thread_index_internal() = thread_index;
-
+			async_worker->make_current(thread_index);
 			async_worker->start();
 			// attach current warp
 			main_warp = std::make_unique<lua_warp_t>(std::ref(*async_worker));
@@ -60,8 +58,7 @@ namespace iris {
 	bool lua_co_await_t::terminate() noexcept {
 		if (async_worker != nullptr) {
 			// cleanup threadlocal worker state
-			lua_async_worker_t::get_current() = nullptr;
-			lua_async_worker_t::get_current_thread_index_internal() = ~(size_t)0;
+			async_worker->make_current(~(size_t)0);
 
 			// notify terminate and wait all threads to exit
 			async_worker->terminate();
