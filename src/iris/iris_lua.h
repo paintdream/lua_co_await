@@ -184,6 +184,7 @@ namespace iris {
 
 				lua_pushnil(L);
 				while (lua_next(L, -2) != 0) {
+					// since we do not allow implicit lua_tostring conversion, so it's safe to extract key without duplicating it
 					if (func(get_variable<key_t>(L, -2), get_variable<value_t>(L, -1))) {
 						lua_pop(L, 1);
 						break;
@@ -423,6 +424,34 @@ namespace iris {
 			deref(L, std::move(r));
 		}
 
+		// get from lua registry table
+		template <typename value_t, typename key_t>
+		value_t get_registry(key_t&& key) {
+			auto guard = write_fence();
+			lua_State* L = state;
+			stack_guard_t stack_guard(L);
+
+			push_variable(L, std::forward<key_t>(key));
+			lua_rawget(L, LUA_REGISTRYINDEX);
+			value_t value = get_variable<value_t>(L, -1);
+			lua_pop(L, 1);
+
+			return value;
+		}
+
+		// set lua registry table
+		template <typename key_t, typename value_t>
+		void set_registry(key_t&& key, value_t&& value) {
+			auto guard = write_fence();
+			lua_State* L = state;
+			stack_guard_t stack_guard(L);
+
+			push_variable(L, std::forward<key_t>(key));
+			push_variable(L, std::forward<value_t>(value));
+			lua_rawset(L, LUA_REGISTRYINDEX);
+		}
+
+		// get lua global value from name
 		template <typename value_t>
 		value_t get_global(std::string_view key) {
 			auto guard = write_fence();
@@ -434,6 +463,16 @@ namespace iris {
 			lua_pop(L, 1);
 
 			return value;
+		}
+
+		// set lua global table with given name and value
+		template <typename value_t>
+		void set_global(std::string_view key, value_t&& value) {
+			auto guard = write_fence();
+			lua_State* L = state;
+			stack_guard_t stack_guard(L);
+			push_variable(L, std::forward<value_t>(value));
+			lua_setglobal(L, key.data());
 		}
 
 		// define a variable by value
@@ -468,6 +507,18 @@ namespace iris {
 			}
 		}
 
+		// define metatable for current table, should be called nested in make_table call
+		template <typename value_t>
+		void define_metatable(value_t&& metatable) {
+			auto guard = write_fence();
+
+			lua_State* L = state;
+			stack_guard_t stack_guard(L);
+			push_variable(L, std::forward<value_t>(metatable));
+			lua_setmetatable(L, -2);
+		}
+
+		// make a table, defining variables via define_* series functions in a callback function
 		template <typename func_t>
 		ref_t make_table(func_t&& func) {
 			auto guard = write_fence();
@@ -486,6 +537,7 @@ namespace iris {
 			deref(state, std::move(r));
 		}
 
+		// native_* series functions may cause a unbalanced stack, use them at your own risks
 		template <typename value_t>
 		void native_push_variable(value_t&& value) {
 			auto guard = write_fence();
@@ -539,8 +591,8 @@ namespace iris {
 		template <typename return_t, typename callable_t, typename... args_t>
 		std::conditional_t<std::is_void_v<return_t>, std::optional<bool>, std::optional<return_t>> call(callable_t&& reference, args_t&&... args) {
 			IRIS_PROFILE_SCOPE(__FUNCTION__);
-			auto guard = write_fence();
 
+			auto guard = write_fence();
 			lua_State* L = state;
 			stack_guard_t stack_guard(L);
 			push_variable(L, std::forward<callable_t>(reference));
@@ -561,6 +613,7 @@ namespace iris {
 			}
 		}
 
+		// wrap a member function with normal function
 		template <auto method, typename return_t, typename type_t, typename... args_t>
 		static return_t method_function_adapter(required_t<type_t*>&& object, std::remove_reference_t<args_t>&&... args) {
 			if constexpr (!std::is_void_v<return_t>) {
@@ -756,10 +809,12 @@ namespace iris {
 			if constexpr (std::is_null_pointer_v<value_t>) {
 				return nullptr;
 			} else if constexpr (iris_is_reference_wrapper_v<type_t>) {
+				// pass reference wrapper as plain pointer without lifetime management, usually used by create_object() internally
 				return std::ref(*reinterpret_cast<typename type_t::type*>(lua_touserdata(L, index)));
 			} else if constexpr (std::is_base_of_v<ref_t, value_t>) {
 				using internal_type_t = typename value_t::internal_type_t;
 				if constexpr (!std::is_void_v<internal_type_t>) {
+					// is refptr?
 					auto internal_value = get_variable<internal_type_t, skip_checks>(L, index);
 					if (internal_value) {
 						lua_pushvalue(L, index);
@@ -803,6 +858,7 @@ namespace iris {
 						int absindex = lua_absindex(L, index);
 						lua_pushnil(L);
 						while (lua_next(L, absindex) != 0) {
+							// since we do not allow implicit lua_tostring conversion, so it's safe to extract key without duplicating it
 							result[get_variable<key_type>(L, -2)] = get_variable<mapped_type>(L, -1);
 							lua_pop(L, 1);
 						}
@@ -1103,6 +1159,8 @@ namespace iris {
 
 					for (auto&& pair : variable) {
 						stack_guard_t guard(L);
+
+						// move all elements if container is a rvalue
 						if constexpr (std::is_rvalue_reference_v<type_t&&>) {
 							push_variable(L, std::move(pair.first));
 							push_variable(L, std::move(pair.second));
@@ -1119,6 +1177,8 @@ namespace iris {
 					int i = 0;
 					for (auto&& value : variable) {
 						stack_guard_t guard(L);
+
+						// move all elements if container is a rvalue
 						if constexpr (std::is_rvalue_reference_v<type_t&&>) {
 							push_variable(L, std::move(value));
 						} else {
@@ -1129,6 +1189,7 @@ namespace iris {
 					}
 				}
 			} else if constexpr (std::is_base_of_v<require_base_t, value_t>) {
+				// move internal value if wrapper is rvalue
 				if constexpr (std::is_rvalue_reference_v<type_t&&>) {
 					push_variable(L, std::move(variable.get()));
 				} else {
@@ -1189,6 +1250,7 @@ namespace iris {
 						lua_pushnil(L);
 
 						while (lua_next(L, absindex) != 0) {
+							// since we do not allow implicit lua_tostring conversion, so it's safe to extract key without duplicating it
 							cross_transfer_variable<move>(L, target, -2, absindex, target_absindex);
 							cross_transfer_variable<move>(L, target, -1, absindex, target_absindex);
 							lua_rawset(T, -3);
