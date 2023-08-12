@@ -424,6 +424,37 @@ namespace iris {
 			deref(L, std::move(r));
 		}
 
+		struct context_this {};
+		struct context_table {};
+		struct context_upvalue {
+			context_upvalue(int i) noexcept : index(i) {}
+			int index;
+		};
+
+		struct context_stack_top {};
+
+		template <typename value_t, typename key_t>
+		value_t get_context(key_t&& key) {
+			auto guard = write_fence();
+			lua_State* L = state;
+			stack_guard_t stack_guard(L);
+
+			using type_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<key_t>>>;
+			if constexpr (std::is_same_v<type_t, context_this>) {
+				assert(lua_isuserdata(L, 1));
+				return get_variable<value_t>(L, 1);
+			} else if constexpr (std::is_same_v<type_t, context_table>) {
+				assert(lua_istable(L, -1));
+				return get_variable<value_t>(L, -1);
+			} else if constexpr (std::is_same_v<type_t, context_upvalue>) {
+				return get_variable<value_t>(L, lua_upvalueindex(key.index));
+			} else if constexpr (std::is_same_v<type_t, context_stack_top>) {
+				return lua_gettop(L);
+			} else {
+				return value_t();
+			}
+		}
+
 		// get from lua registry table
 		template <typename value_t, typename key_t>
 		value_t get_registry(key_t&& key) {
@@ -1087,20 +1118,24 @@ namespace iris {
 				return 0;
 			}
 
-			stack_guard_t guard(L, 1);
 			using value_t = decltype(object->*prop);
-			if constexpr (std::is_const_v<std::remove_reference_t<value_t>>) {
-				push_variable(L, object->*prop); // return the original value 
-			} else {
-				bool assign = !lua_isnone(L, 2);
-				push_variable(L, object->*prop);
+			bool assign = !lua_isnone(L, 2);
 
+			if constexpr (std::is_const_v<std::remove_reference_t<value_t>>) {
+				if (!assign) {
+					stack_guard_t guard(L, 1);
+					push_variable(L, object->*prop); // return the original value
+				}
+			} else {
 				if (assign) {
 					object->*prop = get_variable<std::remove_reference_t<value_t>>(L, 2);
+				} else {
+					stack_guard_t guard(L, 1);
+					push_variable(L, object->*prop);
 				}
 			}
 
-			return 1;
+			return assign ? 0 : 1;
 		}
 
 		// push variables from a tuple into a lua table
@@ -1321,9 +1356,9 @@ namespace iris {
 									target.native_push_variable(nullptr);
 								} else {
 									if constexpr (move) {
-										reinterpret_cast<decltype(&copy_construct_stub<void, 0>)>(ptr)(T, src);
+										reinterpret_cast<decltype(&copy_construct_stub<void*, 0>)>(ptr)(T, src);
 									} else {
-										reinterpret_cast<decltype(&move_construct_stub<void, 0>)>(ptr)(T, src);
+										reinterpret_cast<decltype(&move_construct_stub<void*, 0>)>(ptr)(T, src);
 									}
 
 									lua_pushvalue(T, -3);
