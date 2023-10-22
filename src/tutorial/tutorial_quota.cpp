@@ -2,9 +2,9 @@
 
 namespace iris {
 	void tutorial_quota_t::lua_registar(lua_t&& lua) {
-		lua.define<&tutorial_quota_t::work>("work");
-		lua.define<&tutorial_quota_t::get_remaining>("get_remaining");
-		lua.define("run", lua.load("local self = ...\n\
+		lua.set_current<&tutorial_quota_t::work>("work");
+		lua.set_current<&tutorial_quota_t::get_remaining>("get_remaining");
+		lua.set_current("run", lua.load("local self = ...\n\
 print('[tutorial_quota] begin working')\n\
 local running = coroutine.running() \n\
 local complete_count = 0 \n\

@@ -2,18 +2,18 @@
 
 namespace iris {
 	void tutorial_binding_t::lua_registar(lua_t&& lua) {
-		lua.define<&tutorial_binding_t::init>("init");
-		lua.define<&tutorial_binding_t::save>("save");
-		lua.define<&tutorial_binding_t::load>("load");
-		lua.define<&tutorial_binding_t::copy>("copy");
-		lua.define<&tutorial_binding_t::copy_static>("copy_static");
-		lua.define<&tutorial_binding_t::int_value>("int_value");
-		lua.define<&tutorial_binding_t::float_value>("float_value");
-		lua.define<&tutorial_binding_t::double_value>("double_value");
-		lua.define<&tutorial_binding_t::string_value>("string_value");
-		lua.define<&tutorial_binding_t::string_vector_value>("string_vector_value");
-		lua.define<&tutorial_binding_t::string_int_map_value>("string_int_map_value");
-		lua.define("run", lua.load("local self = ...\n\
+		lua.set_current<&tutorial_binding_t::init>("init");
+		lua.set_current<&tutorial_binding_t::save>("save");
+		lua.set_current<&tutorial_binding_t::load>("load");
+		lua.set_current<&tutorial_binding_t::copy>("copy");
+		lua.set_current<&tutorial_binding_t::copy_static>("copy_static");
+		lua.set_current<&tutorial_binding_t::int_value>("int_value");
+		lua.set_current<&tutorial_binding_t::float_value>("float_value");
+		lua.set_current<&tutorial_binding_t::double_value>("double_value");
+		lua.set_current<&tutorial_binding_t::string_value>("string_value");
+		lua.set_current<&tutorial_binding_t::string_vector_value>("string_vector_value");
+		lua.set_current<&tutorial_binding_t::string_int_map_value>("string_int_map_value");
+		lua.set_current("run", lua.load("local self = ...\n\
 print('[tutorial_binding] ')\n\
 local printfields = function (object) \n\
 	print('\tint_value = ' .. tostring(object:int_value())) \n\
@@ -135,12 +135,12 @@ print('[tutorial_binding] complete!')\n"));
 
 	lua_t::ref_t tutorial_binding_t::save(lua_t&& lua) {
 		return lua.make_table([this](lua_t&& lua) {
-			lua.define("int_value", int_value);
-			lua.define("float_value", float_value);
-			lua.define("double_value", double_value);
-			lua.define("string_value", string_value);
-			lua.define("string_vector_value", string_vector_value);
-			lua.define("string_int_map_value", string_int_map_value);
+			lua.set_current("int_value", int_value);
+			lua.set_current("float_value", float_value);
+			lua.set_current("double_value", double_value);
+			lua.set_current("string_value", string_value);
+			lua.set_current("string_vector_value", string_vector_value);
+			lua.set_current("string_int_map_value", string_int_map_value);
 		});
 	}
 }

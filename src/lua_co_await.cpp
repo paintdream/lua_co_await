@@ -12,15 +12,15 @@
 
 namespace iris {
 	void lua_co_await_t::lua_registar(lua_t&& lua) {
-		lua.define<&lua_co_await_t::get_version>("get_version");
-		lua.define<&lua_co_await_t::start>("start");
-		lua.define<&lua_co_await_t::terminate>("terminate");
-		lua.define<&lua_co_await_t::poll>("poll");
-		lua.define<&lua_co_await_t::tutorial_binding>("tutorial_binding");
-		lua.define<&lua_co_await_t::tutorial_async>("tutorial_async");
-		lua.define<&lua_co_await_t::tutorial_warp>("tutorial_warp");
-		lua.define<&lua_co_await_t::tutorial_quota>("tutorial_quota");
-		lua.define<&lua_co_await_t::run_tutorials>("run_tutorials");
+		lua.set_current<&lua_co_await_t::get_version>("get_version");
+		lua.set_current<&lua_co_await_t::start>("start");
+		lua.set_current<&lua_co_await_t::terminate>("terminate");
+		lua.set_current<&lua_co_await_t::poll>("poll");
+		lua.set_current<&lua_co_await_t::tutorial_binding>("tutorial_binding");
+		lua.set_current<&lua_co_await_t::tutorial_async>("tutorial_async");
+		lua.set_current<&lua_co_await_t::tutorial_warp>("tutorial_warp");
+		lua.set_current<&lua_co_await_t::tutorial_quota>("tutorial_quota");
+		lua.set_current<&lua_co_await_t::run_tutorials>("run_tutorials");
 	}
 
 	lua_co_await_t::lua_co_await_t() {}

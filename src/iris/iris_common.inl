@@ -49,17 +49,19 @@ SOFTWARE.
 	#include <malloc.h>
 #endif
 
+#if defined(USE_VLD)
 #if USE_VLD
 #include <vld.h>
+#endif
 #endif
 
 namespace iris {
 	static constexpr size_t large_page = 64 * 1024;
-	void* iris_alloc_aligned(size_t size, size_t alignment) {
+	IRIS_SHARED_LIBRARY_DECORATOR void* iris_alloc_aligned(size_t size, size_t alignment) {
 #ifdef _WIN32
 		// 64k page, use low-level allocation
 		if (size >= large_page && ((size & (large_page - 1)) == 0)) {
-			assert(alignment <= large_page);
+			IRIS_ASSERT(alignment <= large_page);
 			// usually, VirtualAlloc allocates memory in page with 64k
 			return ::VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_READWRITE);
 		} else {
@@ -67,7 +69,7 @@ namespace iris {
 		}
 #else
 		if (size >= large_page && ((size & (large_page - 1)) == 0)) {
-			assert(alignment <= large_page);
+			IRIS_ASSERT(alignment <= large_page);
 			// mmap also aligns at 64k without any gaps between pages in most of implementations
 			return mmap(0, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		} else {
@@ -76,7 +78,7 @@ namespace iris {
 #endif
 	}
 
-	void iris_free_aligned(void* data, size_t size) noexcept {
+	IRIS_SHARED_LIBRARY_DECORATOR void iris_free_aligned(void* data, size_t size) noexcept {
 #ifdef _WIN32
 		if (size >= large_page && ((size & (large_page - 1)) == 0)) {
 			::VirtualFree(data, 0, MEM_RELEASE);

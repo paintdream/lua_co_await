@@ -2,10 +2,10 @@
 
 namespace iris {
 	void tutorial_warp_t::lua_registar(lua_t&& lua) {
-		lua.define<&tutorial_warp_t::pipeline>("pipeline");
-		lua.define<&tutorial_warp_t::warp_variable>("warp_variable");
-		lua.define<&tutorial_warp_t::free_variable>("free_variable");
-		lua.define("run", lua.load("local self = ...\n\
+		lua.set_current<&tutorial_warp_t::pipeline>("pipeline");
+		lua.set_current<&tutorial_warp_t::warp_variable>("warp_variable");
+		lua.set_current<&tutorial_warp_t::free_variable>("free_variable");
+		lua.set_current("run", lua.load("local self = ...\n\
 print('[tutorial_warp] begin pipeline')\n\
 local running = coroutine.running() \n\
 local complete_count = 0 \n\
