@@ -370,6 +370,13 @@ namespace iris {
 			}
 		};
 
+		template <typename type_t>
+		struct is_functor {
+			template <typename> static std::false_type test(...);
+			template <typename impl_t> static auto test(int) -> decltype(&impl_t::operator (), std::true_type());
+			static constexpr bool value = std::is_same<decltype(test<type_t>(0)), std::true_type>::value;
+		};
+
 		// register a new type, taking registar from &type_t::lua_registar by default, and you could also specify your own registar.
 		template <typename type_t, int user_value_count = 0, auto registar = has_registar<type_t>::get_registar(), typename... args_t>
 		ref_t make_type(std::string_view name, args_t&&... args) {
@@ -380,33 +387,11 @@ namespace iris {
 			stack_guard_t stack_guard(L);
 			lua_newtable(L);
 
-			// hash code is to check types when passing as a argument to C++
-			push_variable(L, "__hash");
-			push_variable(L, reinterpret_cast<void*>(get_hash<type_t>()));
-			lua_rawset(L, -3);
-
-			// copy constructor
-			if constexpr (std::is_copy_constructible_v<type_t>) {
-				push_variable(L, "__copy");
-				push_variable(L, reinterpret_cast<void*>(&copy_construct_stub<type_t, user_value_count>));
-				lua_rawset(L, -3);
-			}
-
-			// move constructor
-			if constexpr (std::is_move_constructible_v<type_t>) {
-				push_variable(L, "__move");
-				push_variable(L, reinterpret_cast<void*>(&move_construct_stub<type_t, user_value_count>));
-				lua_rawset(L, -3);
-			}
+			make_uniform_meta_internal<type_t, user_value_count>(L);
 
 			// readable name
 			push_variable(L, "__name");
 			push_variable(L, name);
-			lua_rawset(L, -3);
-
-			// create __gc for collecting objects
-			push_variable(L, "__gc");
-			lua_pushcfunction(L, &iris_lua_t::delete_object<type_t>);
 			lua_rawset(L, -3);
 
 			push_variable(L, "__index");
@@ -425,31 +410,103 @@ namespace iris {
 			return ref_t(luaL_ref(L, LUA_REGISTRYINDEX));
 		}
 
-		template <typename value_t, int user_value_count = 0, typename type_t, typename... args_t>
-		refptr_t<value_t> make_object(type_t&& type, args_t&&... args) {
+		template <typename type_t, int user_value_count = 0, typename meta_t, typename... args_t>
+		refptr_t<type_t> make_object(meta_t&& meta, args_t&&... args) {
 			IRIS_PROFILE_SCOPE(__FUNCTION__);
 
 			lua_State* L = state;
 			stack_guard_t guard(L);
-			IRIS_ASSERT(*type.template get<const void*>(*this, "__hash") == reinterpret_cast<const void*>(get_hash<value_t>()));
+			IRIS_ASSERT(*meta.template get<const void*>(*this, "__hash") == reinterpret_cast<const void*>(get_hash<type_t>()));
 
-			value_t* p = reinterpret_cast<value_t*>(lua_newuserdatauv(L, sizeof(value_t), user_value_count));
-			new (p) value_t(std::forward<args_t>(args)...);
-			lua_rawgeti(L, LUA_REGISTRYINDEX, type.get());
+			static_assert(alignof(type_t) <= alignof(lua_Number), "Too large alignment for object holding.");
+			type_t* p = reinterpret_cast<type_t*>(lua_newuserdatauv(L, std::max(sizeof(void*) + 1, sizeof(type_t)), user_value_count));
+			new (p) type_t(std::forward<args_t>(args)...);
+			lua_rawgeti(L, LUA_REGISTRYINDEX, meta.get());
 			lua_setmetatable(L, -2);
 			initialize_object(L, p, lua_absindex(L, -1));
 
-			if constexpr (std::is_rvalue_reference_v<type_t&&>) {
-				deref(std::move(type));
+			if constexpr (std::is_rvalue_reference_v<meta_t&&>) {
+				deref(std::move(meta));
 			}
 
-			return refptr_t<value_t>(luaL_ref(L, LUA_REGISTRYINDEX), p);
+			return refptr_t<type_t>(luaL_ref(L, LUA_REGISTRYINDEX), p);
 		}
 
-		struct context_this {};
-		struct context_table {};
-		struct context_upvalue {
-			context_upvalue(int i) noexcept : index(i) {}
+		template <typename type_t, typename meta_t, typename... args_t>
+		refptr_t<type_t> make_object_view(meta_t&& meta, type_t* object) {
+			IRIS_PROFILE_SCOPE(__FUNCTION__);
+			assert(object != nullptr);
+
+			lua_State* L = state;
+			stack_guard_t guard(L);
+			IRIS_ASSERT(*meta.template get<const void*>(*this, "__hash") == reinterpret_cast<const void*>(get_hash<type_t>()));
+
+			static_assert(sizeof(type_t*) == sizeof(void*), "Unrecognized architecture.");
+			type_t** p = reinterpret_cast<type_t**>(lua_newuserdatauv(L, sizeof(type_t*), 0));
+			*p = object;
+
+			lua_rawgeti(L, LUA_REGISTRYINDEX, meta.get());
+			lua_setmetatable(L, -2);
+			initialize_object(L, p, lua_absindex(L, -1));
+
+			if constexpr (std::is_rvalue_reference_v<meta_t&&>) {
+				deref(std::move(meta));
+			}
+
+			return refptr_t<type_t>(luaL_ref(L, LUA_REGISTRYINDEX), object);
+		}
+
+		struct buffer_t {
+			template <typename value_t>
+			buffer_t& operator << (value_t&& value) {
+				using type_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<value_t>>>;
+				if constexpr (std::is_convertible_v<value_t, std::string_view>) {
+					std::string_view view = value;
+					luaL_addlstring(buffer, view.data(), view.size());
+				} else if constexpr (std::is_integral_v<type_t> && sizeof(type_t) > sizeof(char)) {
+					luaL_addlstring(buffer, &value, sizeof(value));
+				} else {
+					luaL_addchar(buffer, value);
+				}
+
+				return *this;
+			}
+
+			friend struct iris_lua_t;
+		protected:
+			buffer_t(lua_State* s, luaL_Buffer* b) noexcept : L(s), buffer(b) { IRIS_ASSERT(L != nullptr && buffer != nullptr); }
+
+			lua_State* L;
+			luaL_Buffer* buffer;
+		};
+
+		template <typename... args_t>
+		ref_t make_string(const char* fmt, args_t&&... args) {
+			IRIS_PROFILE_SCOPE(__FUNCTION__);
+
+			lua_State* L = state;
+			stack_guard_t guard(L);
+			lua_pushfstring(L, fmt, std::forward<args_t>(args)...);
+			return ref_t(luaL_ref(L, LUA_REGISTRYINDEX));
+		}
+
+		template <typename func_t>
+		ref_t make_string(func_t&& func) {
+			IRIS_PROFILE_SCOPE(__FUNCTION__);
+
+			lua_State* L = state;
+			stack_guard_t guard(L);
+			luaL_Buffer buff;
+			luaL_buffinit(L, &buff);
+			func(buffer_t(L, &buff));
+			luaL_pushresult(&buff);
+			return ref_t(luaL_ref(L, LUA_REGISTRYINDEX));
+		}
+
+		struct context_this_t {};
+		struct context_table_t {};
+		struct context_upvalue_t {
+			context_upvalue_t(int i) noexcept : index(i) {}
 			int index;
 		};
 
@@ -462,13 +519,13 @@ namespace iris {
 			stack_guard_t stack_guard(L);
 
 			using type_t = std::remove_volatile_t<std::remove_const_t<std::remove_reference_t<key_t>>>;
-			if constexpr (std::is_same_v<type_t, context_this>) {
+			if constexpr (std::is_same_v<type_t, context_this_t>) {
 				IRIS_ASSERT(lua_isuserdata(L, 1));
 				return get_variable<value_t>(L, 1);
-			} else if constexpr (std::is_same_v<type_t, context_table>) {
+			} else if constexpr (std::is_same_v<type_t, context_table_t>) {
 				IRIS_ASSERT(lua_istable(L, -1));
 				return get_variable<value_t>(L, -1);
-			} else if constexpr (std::is_same_v<type_t, context_upvalue>) {
+			} else if constexpr (std::is_same_v<type_t, context_upvalue_t>) {
 				return get_variable<value_t>(L, lua_upvalueindex(key.index));
 			} else if constexpr (std::is_same_v<type_t, context_stack_top>) {
 				return lua_gettop(L);
@@ -701,7 +758,20 @@ namespace iris {
 		template <bool move, typename lua_t>
 		void native_cross_transfer_variable(lua_t& target, int index) {
 			auto guard = write_fence();
-			cross_transfer_variable<move>(state, target, index, 0, 0);
+
+			lua_State* L = get_state();
+			stack_guard_t stack_guard_source(L);
+			lua_State* T = target.get_state();
+			stack_guard_t stack_guard_target(T, 1);
+
+			int src_index = lua_absindex(L, index);
+			lua_newtable(L);
+			lua_newtable(T);
+
+			cross_transfer_variable<move>(state, target, src_index, lua_absindex(L, -1), lua_absindex(T, -1), 0);
+
+			lua_replace(T, -2);
+			lua_pop(L, 1);
 		}
 
 		template <typename callable_t>
@@ -721,7 +791,6 @@ namespace iris {
 			} else {
 				log_error(L, "iris_lua_t::call() -> call function failed! %s\n", lua_tostring(L, -1));
 				lua_pop(L, 1);
-				IRIS_ASSERT(lua_gettop(L) == top);
 				return 0;
 			}
 		}
@@ -763,6 +832,19 @@ namespace iris {
 			}
 		}
 
+		template <auto method, typename return_t, typename type_t, typename... args_t>
+		static return_t method_functor_adapter(iris_lua_t lua, std::remove_reference_t<args_t>&&... args) {
+			lua_State* L = lua.get_state();
+			type_t* ptr = reinterpret_cast<type_t*>(lua_touserdata(L, lua_upvalueindex(1)));
+			assert(ptr != nullptr);
+
+			if constexpr (!std::is_void_v<return_t>) {
+				return (ptr->*method)(std::move(args)...);
+			} else {
+				(ptr->*method)(std::move(args)...);
+			}
+		}
+
 		static void deref(lua_State* L, ref_t&& r) noexcept {
 			if (r.value != LUA_REFNIL) {
 				luaL_unref(L, LUA_REGISTRYINDEX, r.value);
@@ -780,13 +862,13 @@ namespace iris {
 		// copy constructor stub
 		template <typename type_t, int user_value_count>
 		static void copy_construct_stub(lua_State* L, const void* prototype) {
-			new (reinterpret_cast<type_t*>(lua_newuserdatauv(L, sizeof(type_t), user_value_count))) type_t(*reinterpret_cast<const type_t*>(prototype));
+			new (reinterpret_cast<type_t*>(lua_newuserdatauv(L, std::max(sizeof(void*) + 1, sizeof(type_t)), user_value_count))) type_t(*reinterpret_cast<const type_t*>(prototype));
 		}
 
 		// copy constructor stub
 		template <typename type_t, int user_value_count>
 		static void move_construct_stub(lua_State* L, void* prototype) {
-			new (reinterpret_cast<type_t*>(lua_newuserdatauv(L, sizeof(type_t), user_value_count))) type_t(std::move(*reinterpret_cast<type_t*>(prototype)));
+			new (reinterpret_cast<type_t*>(lua_newuserdatauv(L, std::max(sizeof(void*) + 1, sizeof(type_t)), user_value_count))) type_t(std::move(*reinterpret_cast<type_t*>(prototype)));
 		}
 
 		// raw lua stub
@@ -796,24 +878,40 @@ namespace iris {
 		}
 
 		// four specs for [const][noexcept] method definition
-		template <auto method, typename return_t, typename type_t, typename... args_t>
-		static void push_method(lua_State* L, return_t(type_t::*)(args_t...)) {
-			push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+		template <auto method, typename object_t, typename return_t, typename type_t, typename... args_t>
+		static void push_method(lua_State* L, object_t&& object, return_t(type_t::*)(args_t...)) {
+			if constexpr (std::is_null_pointer_v<object_t>) {
+				push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+			} else {
+				push_functor_internal<method_functor_adapter<method, return_t, type_t, args_t...>, object_t&&, return_t, type_t, args_t...>(L, std::forward<object_t>(object));
+			}
 		}
 
-		template <auto method, typename return_t, typename type_t, typename... args_t>
-		static void push_method(lua_State* L, return_t(type_t::*)(args_t...) noexcept) {
-			push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+		template <auto method, typename object_t, typename return_t, typename type_t, typename... args_t>
+		static void push_method(lua_State* L, object_t&& object, return_t(type_t::*)(args_t...) noexcept) {
+			if constexpr (std::is_null_pointer_v<object_t>) {
+				push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+			} else {
+				push_functor_internal<method_functor_adapter<method, return_t, type_t, args_t...>, object_t&&, return_t, type_t, args_t...>(L, std::forward<object_t>(object));
+			}
 		}
 
-		template <auto method, typename return_t, typename type_t, typename... args_t>
-		static void push_method(lua_State* L, return_t(type_t::*)(args_t...) const) {
-			push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+		template <auto method, typename object_t, typename return_t, typename type_t, typename... args_t>
+		static void push_method(lua_State* L, object_t&& object, return_t(type_t::*)(args_t...) const) {
+			if constexpr (std::is_null_pointer_v<object_t>) {
+				push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+			} else {
+				push_functor_internal<method_functor_adapter<method, return_t, type_t, args_t...>, object_t&&, return_t, type_t, args_t...>(L, std::forward<object_t>(object));
+			}
 		}
 
-		template <auto method, typename return_t, typename type_t, typename... args_t>
-		static void push_method(lua_State* L, return_t(type_t::*)(args_t...) const noexcept) {
-			push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+		template <auto method, typename object_t, typename return_t, typename type_t, typename... args_t>
+		static void push_method(lua_State* L, object_t&& object, return_t(type_t::*)(args_t...) const noexcept) {
+			if constexpr (std::is_null_pointer_v<object_t>) {
+				push_function_internal<method_function_adapter<method, return_t, type_t, args_t...>, return_t, required_t<type_t*>&&, args_t...>(L);
+			} else {
+				push_functor_internal<method_functor_adapter<method, return_t, type_t, args_t...>, object_t&&, return_t, type_t, args_t...>(L, std::forward<object_t>(object));
+			}
 		}
 
 		template <auto function, typename return_t, typename... args_t>
@@ -832,6 +930,22 @@ namespace iris {
 				lua_pushcclosure(L, &iris_lua_t::function_coroutine_proxy<function, return_t, args_t...>, 0);
 			} else {
 				lua_pushcclosure(L, &iris_lua_t::function_proxy<function, return_t, args_t...>, 0);
+			}
+		}
+
+		template <auto function, typename object_t, typename return_t, typename type_t, typename... args_t>
+		static void push_functor_internal(lua_State* L, object_t&& object) {
+			type_t* ptr = reinterpret_cast<type_t*>(lua_newuserdatauv(L, std::max(sizeof(void*) + 1, sizeof(type_t)), 0));
+			new (ptr) type_t(std::forward<object_t>(object));
+
+			lua_newtable(L);
+			make_uniform_meta_internal<type_t, 0>(L);
+			lua_setmetatable(L, -2);
+
+			if constexpr (iris_is_coroutine<return_t>::value) {
+				lua_pushcclosure(L, &iris_lua_t::function_coroutine_proxy<function, return_t, iris_lua_t, args_t...>, 1);
+			} else {
+				lua_pushcclosure(L, &iris_lua_t::function_proxy<function, return_t, iris_lua_t, args_t...>, 1);
 			}
 		}
 		
@@ -937,6 +1051,33 @@ namespace iris {
 			return property_proxy_dispatch<prop_t, type_t>(L, prop);
 		}
 
+		template <typename type_t, int user_value_count>
+		static void make_uniform_meta_internal(lua_State* L) {
+			// hash code is to check types when passing as a argument to C++
+			push_variable(L, "__hash");
+			push_variable(L, reinterpret_cast<void*>(get_hash<type_t>()));
+			lua_rawset(L, -3);
+
+			// copy constructor
+			if constexpr (std::is_copy_constructible_v<type_t>) {
+				push_variable(L, "__copy");
+				push_variable(L, reinterpret_cast<void*>(&copy_construct_stub<type_t, user_value_count>));
+				lua_rawset(L, -3);
+			}
+
+			// move constructor
+			if constexpr (std::is_move_constructible_v<type_t>) {
+				push_variable(L, "__move");
+				push_variable(L, reinterpret_cast<void*>(&move_construct_stub<type_t, user_value_count>));
+				lua_rawset(L, -3);
+			}
+
+			// create __gc for collecting objects
+			push_variable(L, "__gc");
+			lua_pushcfunction(L, &iris_lua_t::delete_object<type_t>);
+			lua_rawset(L, -3);
+		}
+
 		template <typename type_t>
 		struct has_finalize {
 			template <typename> static std::false_type test(...);
@@ -947,16 +1088,18 @@ namespace iris {
 		// will be called when __gc triggerred
 		template <typename type_t>
 		static int delete_object(lua_State* L) {
-			type_t* p = reinterpret_cast<type_t*>(lua_touserdata(L, 1));
+			if (lua_rawlen(L, 1) > sizeof(void*)) {
+				type_t* p = reinterpret_cast<type_t*>(lua_touserdata(L, 1));
 
-			// call lua_finalize if needed
-			if constexpr (has_finalize<type_t>::value) {
-				p->lua_finalize(iris_lua_t(L), 1);
+				// call lua_finalize if needed
+				if constexpr (has_finalize<type_t>::value) {
+					p->lua_finalize(iris_lua_t(L), 1);
+				}
+
+				IRIS_ASSERT(p != nullptr);
+				// do not free the memory (let lua gc it), just call the destructor
+				p->~type_t();
 			}
-
-			IRIS_ASSERT(p != nullptr);
-			// do not free the memory (let lua gc it), just call the destructor
-			p->~type_t();
 
 			return 0;
 		}
@@ -988,8 +1131,9 @@ namespace iris {
 			IRIS_PROFILE_SCOPE(__FUNCTION__);
 			check_required_parameters<1, args_t...>(L);
 
+			static_assert(alignof(type_t) <= alignof(lua_Number), "Too large alignment for object holding.");
 			stack_guard_t guard(L, 1);
-			type_t* p = reinterpret_cast<type_t*>(lua_newuserdatauv(L, sizeof(type_t), user_value_count));
+			type_t* p = reinterpret_cast<type_t*>(lua_newuserdatauv(L, std::max(sizeof(void*) + 1, sizeof(type_t)), user_value_count));
 			invoke_create<type_t, std::tuple<args_t...>>(p, L, std::make_index_sequence<sizeof...(args_t)>());
 			lua_pushvalue(L, lua_upvalueindex(1));
 			lua_setmetatable(L, -2);
@@ -1128,7 +1272,11 @@ namespace iris {
 					lua_pop(L, 2);
 				}
 
-				return reinterpret_cast<type_t>(lua_touserdata(L, index));
+				if (lua_rawlen(L, index) > sizeof(void*)) {
+					return reinterpret_cast<type_t>(lua_touserdata(L, index));
+				} else {
+					return *reinterpret_cast<type_t*>(lua_touserdata(L, index));
+				}
 			} else if constexpr (std::is_base_of_v<require_base_t, value_t>) {
 				return get_variable<typename value_t::internal_type_t, true>(L, index);
 			} else {
@@ -1372,7 +1520,7 @@ namespace iris {
 			if constexpr (std::is_convertible_v<decltype(ptr), int (*)(lua_State*)> || std::is_convertible_v<decltype(ptr), int (*)(lua_State*) noexcept>) {
 				push_native(L, ptr);
 			} else if constexpr (std::is_member_function_pointer_v<decltype(ptr)>) {
-				push_method<ptr>(L, ptr);
+				push_method<ptr>(L, std::nullptr_t(), ptr);
 			} else if constexpr (std::is_member_object_pointer_v<decltype(ptr)>) {
 				push_property<ptr>(L, ptr);
 			} else {
@@ -1455,6 +1603,8 @@ namespace iris {
 				} else {
 					push_variable(L, variable.get());
 				}
+			} else if constexpr (is_functor<value_t>::value) {
+				push_method<&type_t::operator ()>(L, std::forward<type_t>(variable), &type_t::operator ());
 			} else {
 				// by default, force iris_lua_convert_t
 				guard.append(iris_lua_convert_t<value_t>::to_lua(L, std::forward<type_t>(variable)) - 1);
@@ -1462,112 +1612,139 @@ namespace iris {
 		}
 
 		template <bool move, typename lua_t>
-		static void cross_transfer_variable(lua_State* L, lua_t& target, int index, int recursion_src_index, int recursion_dst_index) {
+		static int cross_transfer_variable(lua_State* L, lua_t& target, int index, int recursion_source, int recursion_target, int recursion_index) {
 			stack_guard_t guard(L);
 			lua_State* T = target.get_state();
 			stack_guard_t guard_target(T, 1);
 
-			// avoid recursion
-			if (recursion_src_index != 0 && lua_rawequal(L, index, recursion_src_index)) {
-				lua_pushvalue(T, recursion_dst_index);
-			} else {
-				int type = lua_type(L, index);
-				switch (type) {
-					case LUA_TBOOLEAN:
-					{
-						target.native_push_variable(get_variable<bool>(L, index));
-						break;
-					}
-					case LUA_TLIGHTUSERDATA:
-					{
-						target.native_push_variable(get_variable<const void*>(L, index));
-						break;
-					}
-					case LUA_TNUMBER:
-					{
+			int type = lua_type(L, index);
+			switch (type) {
+				case LUA_TBOOLEAN:
+				{
+					target.native_push_variable(get_variable<bool>(L, index));
+					break;
+				}
+				case LUA_TLIGHTUSERDATA:
+				{
+					target.native_push_variable(get_variable<const void*>(L, index));
+					break;
+				}
+				case LUA_TNUMBER:
+				{
 #if LUA_VERSION_NUM <= 502
+					target.native_push_variable(get_variable<lua_Number>(L, index));
+#else
+					if (lua_isinteger(L, index)) {
+						target.native_push_variable(get_variable<lua_Integer>(L, index));
+					} else {
 						target.native_push_variable(get_variable<lua_Number>(L, index));
-#else
-						if (lua_isinteger(L, index)) {
-							target.native_push_variable(get_variable<lua_Integer>(L, index));
-						} else {
-							target.native_push_variable(get_variable<lua_Number>(L, index));
-						}
+					}
 #endif
-						break;
-					}
-					case LUA_TSTRING:
-					{
-						target.native_push_variable(get_variable<std::string_view>(L, index));
-						break;
-					}
-					case LUA_TTABLE:
-					{
-						lua_newtable(T);
-
-						int absindex = lua_absindex(L, index);
-						int target_absindex = lua_absindex(T, -1);
-						lua_pushnil(L);
-
-						while (lua_next(L, absindex) != 0) {
-							// since we do not allow implicit lua_tostring conversion, so it's safe to extract key without duplicating it
-							cross_transfer_variable<move>(L, target, -2, absindex, target_absindex);
-							cross_transfer_variable<move>(L, target, -1, absindex, target_absindex);
-							lua_rawset(T, -3);
+					break;
+				}
+				case LUA_TSTRING:
+				{
+					target.native_push_variable(get_variable<std::string_view>(L, index));
+					break;
+				}
+				case LUA_TTABLE:
+				{
+					// try avoid recursion
+					if (recursion_source != 0) {
+						lua_pushvalue(L, index);
+#if LUA_VERSION_NUM <= 502
+						lua_rawget(L, recursion_source);
+						if (lua_type(L, -1) != LUA_TNIL) {
+#else
+						if (lua_rawget(L, recursion_source) != LUA_TNIL) {
+#endif
+							int target_index = static_cast<int>(reinterpret_cast<size_t>(lua_touserdata(L, -1)));
 							lua_pop(L, 1);
+							lua_rawgeti(T, recursion_target, target_index);
+							break;
 						}
 
-						break;
+						lua_pop(L, 1);
 					}
-					case LUA_TFUNCTION:
-					{
-						if (lua_iscfunction(L, index)) {
-							lua_CFunction proxy = lua_tocfunction(L, index);
-							// copy upvalues
-							int absindex = lua_absindex(L, index);
-							int n = 1;
-							while (lua_getupvalue(L, absindex, n) != nullptr) {
-								cross_transfer_variable<false>(L, target, -1, recursion_src_index, recursion_dst_index);
-								lua_pop(L, 1);
-								n++;
-							}
 
-							lua_pushcclosure(T, proxy, n - 1);
-						} else {
-							// do not convert lua functions
-							target.native_push_variable(nullptr);
-						}
-						break;
+					// not found, try creating a new table
+					lua_newtable(T);
+
+					if (recursion_source != 0) {
+						lua_pushvalue(L, index);
+						lua_pushlightuserdata(L, reinterpret_cast<void*>((size_t)recursion_index));
+						lua_rawset(L, recursion_source);
+
+						lua_pushvalue(T, -1);
+						lua_rawseti(T, recursion_target, recursion_index);
+						recursion_index++;
 					}
-					case LUA_TUSERDATA:
-					{
-						// get metatable
-						void* src = lua_touserdata(L, index);
-						if (src == nullptr || !lua_getmetatable(L, index)) {
-							target.native_push_variable(nullptr);
-						} else {
+
+					int absindex = lua_absindex(L, index);
+					lua_pushnil(L);
+
+					while (lua_next(L, absindex) != 0) {
+						// since we do not allow implicit lua_tostring conversion, so it's safe to extract key without duplicating it
+						recursion_index = cross_transfer_variable<move>(L, target, -2, recursion_source, recursion_target, recursion_index);
+						recursion_index = cross_transfer_variable<move>(L, target, -1, recursion_source, recursion_target, recursion_index);
+						lua_rawset(T, -3);
+						lua_pop(L, 1);
+					}
+
+					break;
+				}
+				case LUA_TFUNCTION:
+				{
+					if (lua_iscfunction(L, index)) {
+						lua_CFunction proxy = lua_tocfunction(L, index);
+						// copy upvalues
+						int absindex = lua_absindex(L, index);
+						int n = 1;
+						while (lua_getupvalue(L, absindex, n) != nullptr) {
+							recursion_index = cross_transfer_variable<false>(L, target, -1, recursion_source, recursion_target, recursion_index);
+							lua_pop(L, 1);
+							n++;
+						}
+
+						lua_pushcclosure(T, proxy, n - 1);
+					} else {
+						// do not convert lua functions
+						target.native_push_variable(nullptr);
+					}
+					break;
+				}
+				case LUA_TUSERDATA:
+				{
+					// get metatable
+					void* src = lua_touserdata(L, index);
+					int absindex = lua_absindex(L, index);
+					if (src == nullptr || !lua_getmetatable(L, index)) {
+						target.native_push_variable(nullptr);
+					} else {
 #if LUA_VERSION_NUM <= 502
-							lua_getfield(L, -1, "__hash");
-							if (lua_type(L, -1) != LUA_TNIL) {
+						lua_getfield(L, -1, "__hash");
+						if (lua_type(L, -1) != LUA_TNIL) {
 #else
-							if (lua_getfield(L, -1, "__hash") != LUA_TNIL) {
+						if (lua_getfield(L, -1, "__hash") != LUA_TNIL) {
 #endif
-								void* hash = lua_touserdata(L, -1);
+							void* hash = lua_touserdata(L, -1);
+							stack_guard_t guard(T, 1);
 #if LUA_VERSION_NUM <= 502
+							lua_pushlightuserdata(T, hash);
+							lua_rawget(T, LUA_REGISTRYINDEX);
+							if (lua_type(T, -1) == LUA_TNIL) {
+#else
+							if (lua_rawgetp(T, LUA_REGISTRYINDEX, hash) == LUA_TNIL) {
+#endif
+								lua_pop(T, 1);
+								// copy metatable
+								recursion_index = cross_transfer_variable<false>(L, target, -2, recursion_source, recursion_target, recursion_index);
 								lua_pushlightuserdata(T, hash);
-								lua_rawget(T, LUA_REGISTRYINDEX);
-								if (lua_type(T, -1) == LUA_TNIL) {
-#else
-								if (lua_rawgetp(T, LUA_REGISTRYINDEX, hash) == LUA_TNIL) {
-#endif
-									lua_pop(T, 1);
-									// copy metatable
-									cross_transfer_variable<false>(L, target, -2, 0, 0);
-									lua_pushlightuserdata(T, hash);
-									lua_pushvalue(T, -2);
-									lua_rawset(T, LUA_REGISTRYINDEX);
-								}
-
+								lua_pushvalue(T, -2);
+								lua_rawset(T, LUA_REGISTRYINDEX);
+							}
+							
+							if (lua_rawlen(L, absindex) > sizeof(void*)) {
 								// now metatable prepared
 								if constexpr (move) {
 									lua_getfield(T, -1, "__move");
@@ -1594,26 +1771,35 @@ namespace iris {
 									lua_pop(T, 1);
 								}
 							} else {
-								target.native_push_variable(nullptr);
-							}
+								void** p = reinterpret_cast<void**>(lua_newuserdatauv(T, sizeof(void*), 0));
+								*p = *reinterpret_cast<void**>(src);
+								lua_pushvalue(T, -2);
+								lua_setmetatable(T, -2);
 
-							lua_pop(L, 2);
+								lua_replace(T, -2);
+							}
+						} else {
+							target.native_push_variable(nullptr);
 						}
 
-						break;
+						lua_pop(L, 2);
 					}
-					case LUA_TTHREAD:
-					{
-						target.native_push_variable(nullptr);
-						break;
-					}
-					default:
-					{
-						target.native_push_variable(nullptr);
-						break;
-					}
+
+					break;
+				}
+				case LUA_TTHREAD:
+				{
+					target.native_push_variable(nullptr);
+					break;
+				}
+				default:
+				{
+					target.native_push_variable(nullptr);
+					break;
 				}
 			}
+
+			return recursion_index;
 		}
 
 	protected:
