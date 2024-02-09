@@ -9,10 +9,7 @@ __declspec(dllexport)
 __attribute__((visibility("default")))
 #endif
 int luaopen_lua_co_await(lua_State * L) {
-	lua_t lua(L);
-	auto ref = lua.make_type<lua_co_await_t>("lua_co_await");
-	lua_rawgeti(L, LUA_REGISTRYINDEX, ref.get());
-	lua.deref(std::move(ref));
-
-	return 1;
+	return lua_t::forward(L, [](lua_t lua) {
+		return lua.make_type<lua_co_await_t>("lua_co_await");
+	});
 }

@@ -2,7 +2,7 @@
 
 // register tutorial types, remove it freely
 // to run tutorial, just launch the lua console, type:
-// require("lua_co_await").create():run_tutorials()
+// require("lua_co_await").new():run_tutorials()
 //
 
 #include "tutorial/tutorial_binding.h"
@@ -120,20 +120,20 @@ namespace iris {
 	void lua_co_await_t::run_tutorials(lua_refptr_t<lua_co_await_t>&& self, lua_t&& lua) {
 		lua.call<void>(lua.load("local co_await = ... \n\
 co_await:start(4) \n\
-co_await:tutorial_binding().create():run() \n\
+co_await:tutorial_binding().new():run() \n\
 local complete_count = 0 \n\
 coroutine.wrap(function () \n\
-	co_await:tutorial_async().create():run() \n\
+	co_await:tutorial_async().new():run() \n\
 	print('complete async') \n\
 	complete_count = complete_count + 1 \n\
 end)() \n\
 coroutine.wrap(function () \n\
-	co_await:tutorial_warp().create():run() \n\
+	co_await:tutorial_warp().new():run() \n\
 	print('complete warp') \n\
 	complete_count = complete_count + 1 \n\
 end)() \n\
 coroutine.wrap(function () \n\
-	co_await:tutorial_quota(100).create():run() \n\
+	co_await:tutorial_quota(100).new():run() \n\
 	print('complete quota') \n\
 	complete_count = complete_count + 1 \n\
 end)() \n\

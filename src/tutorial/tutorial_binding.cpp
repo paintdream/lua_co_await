@@ -41,8 +41,8 @@ for k, v in pairs(tab) do \n\
 end \n\
 tab.int_value = 10 \n\
 self:load(tab) \n\
-local other = getmetatable(self):create() \n\
-local other2 = getmetatable(self):create() \n\
+local other = getmetatable(self).new() \n\
+local other2 = getmetatable(self).new() \n\
 other:copy(self) \n\
 other2:copy_static(self) \n\
 print('other values ') \n\
