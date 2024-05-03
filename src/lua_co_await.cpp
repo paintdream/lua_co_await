@@ -47,9 +47,9 @@ namespace iris {
 			async_worker->start();
 			// attach current warp
 			main_warp = std::make_unique<lua_warp_t>(std::ref(*async_worker));
-			bool result = main_warp->preempt();
-			assert(result); // must success
-			return result;
+			main_guard = std::make_unique<lua_warp_preempt_guard_t>(*main_warp, 0);
+			assert(*main_guard); // must success
+			return *main_guard;
 		} else {
 			return false;
 		}
@@ -68,7 +68,7 @@ namespace iris {
 			while (!main_warp->join<true, true>()) {}
 
 			// cleanup warp data
-			main_warp->yield();
+			main_guard = nullptr; // yield
 			main_warp = nullptr;
 			async_worker = nullptr;
 

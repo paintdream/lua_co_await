@@ -28,5 +28,6 @@ namespace iris {
 	protected:
 		std::unique_ptr<lua_async_worker_t> async_worker;
 		std::unique_ptr<lua_warp_t> main_warp;
+		std::unique_ptr<lua_warp_preempt_guard_t> main_guard;
 	};
 }

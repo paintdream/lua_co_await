@@ -1,5 +1,5 @@
 #include "lua_co_await.h"
-#include "iris/iris_common.inl"
+#include "../ref/iris/src/iris_common.inl"
 using namespace iris;
 
 extern "C"
