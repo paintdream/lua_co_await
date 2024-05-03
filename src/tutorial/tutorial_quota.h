@@ -13,7 +13,7 @@ namespace iris {
 		tutorial_quota_t(lua_async_worker_t& async_worker, size_t capacity);
 		~tutorial_quota_t() noexcept;
 
-		lua_coroutine_t<void> work(size_t cost);
+		lua_coroutine_t<void> pipeline(size_t cost);
 		size_t get_remaining() const noexcept;
 
 	protected:

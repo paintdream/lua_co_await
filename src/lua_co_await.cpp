@@ -9,6 +9,7 @@
 #include "tutorial/tutorial_async.h"
 #include "tutorial/tutorial_quota.h"
 #include "tutorial/tutorial_warp.h"
+#include "tutorial/tutorial_readwrite.h"
 
 namespace iris {
 	void lua_co_await_t::lua_registar(lua_t&& lua) {
@@ -20,6 +21,7 @@ namespace iris {
 		lua.set_current<&lua_co_await_t::tutorial_async>("tutorial_async");
 		lua.set_current<&lua_co_await_t::tutorial_warp>("tutorial_warp");
 		lua.set_current<&lua_co_await_t::tutorial_quota>("tutorial_quota");
+		lua.set_current<&lua_co_await_t::tutorial_readwrite>("tutorial_readwrite");
 		lua.set_current<&lua_co_await_t::run_tutorials>("run_tutorials");
 	}
 
@@ -68,7 +70,9 @@ namespace iris {
 			while (!main_warp->join<true, true>()) {}
 
 			// cleanup warp data
+			main_guard->cleanup();
 			main_guard = nullptr; // yield
+			main_warp->yield();
 			main_warp = nullptr;
 			async_worker = nullptr;
 
@@ -117,6 +121,11 @@ namespace iris {
 		return lua.make_type<tutorial_quota_t>("tutorial_quota", std::ref(*async_worker), capacity);
 	}
 
+	lua_ref_t lua_co_await_t::tutorial_readwrite(lua_t&& lua) {
+		assert(async_worker != nullptr);
+		return lua.make_type<tutorial_readwrite_t>("tutorial_quota", std::ref(*async_worker));
+	}
+
 	void lua_co_await_t::run_tutorials(lua_refptr_t<lua_co_await_t>&& self, lua_t&& lua) {
 		lua.call<void>(lua.load("local co_await = ... \n\
 co_await:start(4) \n\
@@ -137,7 +146,12 @@ coroutine.wrap(function () \n\
 	print('complete quota') \n\
 	complete_count = complete_count + 1 \n\
 end)() \n\
-while complete_count < 3 do \n\
+coroutine.wrap(function () \n\
+	co_await:tutorial_readwrite().new():run() \n\
+	print('complete readwrite') \n\
+	complete_count = complete_count + 1 \n\
+end)() \n\
+while complete_count < 4 do \n\
 	co_await:poll(1000) \n\
 end \n\
 co_await:terminate() \n\

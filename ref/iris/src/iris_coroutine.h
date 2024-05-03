@@ -479,6 +479,9 @@ namespace iris {
 		iris_switch_t(warp_t* target_warp, warp_t* other_warp, bool parallel_target_warp, bool parallel_other_warp) noexcept : source(warp_t::get_current_warp()), target(target_warp), other(other_warp), parallel_target(parallel_target_warp), parallel_other(parallel_other_warp) {}
 
 		bool await_ready() const noexcept {
+			if (parallel_target || parallel_other)
+				return false;
+
 			if (source == target) {
 				return other == nullptr || source == other;
 			} else {
@@ -538,7 +541,7 @@ namespace iris {
 				// dispatching under warp context
 				if (target->get_async_worker().get_current_thread_index() != ~size_t(0)) {
 					if (parallel_target) {
-						target->queue_routine_parallel_post([this, handle = std::move(handle)]() mutable {
+						target->queue_routine_parallel([this, handle = std::move(handle)]() mutable {
 							handler(std::move(handle));
 						});
 					} else {

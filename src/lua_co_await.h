@@ -23,6 +23,7 @@ namespace iris {
 		lua_ref_t tutorial_async(lua_t&& lua);
 		lua_ref_t tutorial_warp(lua_t&& lua);
 		lua_ref_t tutorial_quota(lua_t&& lua, size_t capacity);
+		lua_ref_t tutorial_readwrite(lua_t&& lua);
 		static void run_tutorials(lua_refptr_t<lua_co_await_t>&& self, lua_t&& lua);
 
 	protected:

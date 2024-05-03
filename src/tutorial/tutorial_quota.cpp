@@ -2,10 +2,10 @@
 
 namespace iris {
 	void tutorial_quota_t::lua_registar(lua_t&& lua) {
-		lua.set_current<&tutorial_quota_t::work>("work");
+		lua.set_current<&tutorial_quota_t::pipeline>("pipeline");
 		lua.set_current<&tutorial_quota_t::get_remaining>("get_remaining");
 		lua.set_current("run", lua.load("local self = ...\n\
-print('[tutorial_quota] begin working')\n\
+print('[tutorial_quota] begin pipeline')\n\
 local running = coroutine.running() \n\
 local complete_count = 0 \n\
 local waiting = false \n\
@@ -14,7 +14,7 @@ for i = 1, loop_count do \n\
 	coroutine.wrap(function () \n\
 		print('[tutorial_quota] worker ' .. tostring(i) .. ' begin') \n\
 		print('[tutorial_quota] remaining ' .. tostring(self:get_remaining())) \n\
-		self:work(33) \n\
+		self:pipeline(33) \n\
 		print('[tutorial_quota] worker ' .. tostring(i) .. ' end') \n\
 		complete_count = complete_count + 1 \n\
 		if complete_count == loop_count and waiting then \n\
@@ -26,7 +26,7 @@ if complete_count ~= loop_count then \n\
 	waiting = true \n\
 	coroutine.yield() \n\
 end \n\
-print('[tutorial_quota] end working')\n"));
+print('[tutorial_quota] end pipeline')\n"));
 	}
 
 	tutorial_quota_t::tutorial_quota_t(lua_async_worker_t& async_worker, size_t capacity) : quota({ capacity }), quota_queue(async_worker, quota) {}
@@ -37,7 +37,7 @@ print('[tutorial_quota] end working')\n"));
 		return quota.get()[0];
 	}
 
-	lua_coroutine_t<void> tutorial_quota_t::work(size_t cost) {
+	lua_coroutine_t<void> tutorial_quota_t::pipeline(size_t cost) {
 		// first, switch to any worker in thread poll
 		lua_warp_t* current = co_await iris_switch(static_cast<lua_warp_t*>(nullptr));
 		// acquire quota from quota_queue
