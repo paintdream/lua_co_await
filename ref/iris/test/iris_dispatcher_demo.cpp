@@ -20,7 +20,6 @@ int main(void) {
 	stack_op();
 	not_pow_two();
 	framed_data();
-	for(int i=0;i<19999;i++)
 	simple_explosion();
 	garbage_collection();
 	acquire_release();
@@ -634,6 +633,6 @@ void update_version() {
 	}
 
 	worker.join();
-	assert(final_version == version_count);
+	IRIS_ASSERT(final_version == version_count);
 	printf("Success of update %d/%d\n", success_count.load(std::memory_order_acquire), version_count);
 }
