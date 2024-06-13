@@ -67,7 +67,7 @@ namespace iris {
 			async_worker->join();
 
 			// join with finalize, executing remaining warp tasks (if any)
-			while (!main_warp->join<true, true>()) {}
+			while (!main_warp->join<true, true>([] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); })) {}
 
 			// cleanup warp data
 			main_guard->cleanup();
@@ -88,14 +88,15 @@ namespace iris {
 
 		if (async_worker != nullptr && main_warp != nullptr) {
 			// try poll
-			if (main_warp->join()) {
+			auto waiter = [] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); };
+			if (main_warp->join(waiter)) {
 				return true;
 			} else if (delayInMilliseconds == 0) {
 				return false;
 			} else {
-				async_worker->poll_delay(0, delayInMilliseconds);
+				async_worker->poll_delay(0, std::chrono::milliseconds(delayInMilliseconds));
 				// try poll again
-				return main_warp->join();
+				return main_warp->join(waiter);
 			}
 		} else {
 			return false;

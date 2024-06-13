@@ -31,6 +31,7 @@ SOFTWARE.
 #include "../ref/iris/src/iris_coroutine.h"
 #include "../ref/iris/src/iris_dispatcher.h"
 #include "../ref/iris/src/iris_lua.h"
+#include <chrono>
 
 namespace iris {
 	using lua_async_worker_t = iris_async_worker_t<>;
