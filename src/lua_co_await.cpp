@@ -67,7 +67,7 @@ namespace iris {
 			async_worker->join();
 
 			// join with finalize, executing remaining warp tasks (if any)
-			while (!main_warp->join<true, true>([] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); })) {}
+			while (!async_worker->finalize() || !main_warp->join<true, true>([] { std::this_thread::sleep_for(std::chrono::milliseconds(50)); })) {}
 
 			// cleanup warp data
 			main_guard->cleanup();
