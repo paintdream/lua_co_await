@@ -67,7 +67,7 @@ struct example_base_t {
 
 struct example_t : example_base_t {
 	static void lua_registar(lua_t lua) {
-		lua.set_current("lambda", [lua](int v) {
+		lua.set_current("lambda", [lua](int v) mutable {
 			IRIS_ASSERT(v == 4);
 			return 4;
 		});
@@ -131,7 +131,7 @@ struct example_t : example_base_t {
 		printf("initialize!\n");
 	}
 
-	int get_value() const noexcept {
+	int get_value() noexcept {
 		return value;
 	}
 
@@ -184,12 +184,6 @@ struct example_t : example_base_t {
 		return value += init;
 	}
 
-	// will cause lua error "C-function execution error"
-	/*
-	std::optional<int> accum_value(int init) noexcept {
-		return std::nullopt;
-	}*/
-
 	static std::tuple<int, std::string> forward_tuple(std::tuple<int, std::string>&& v) {
 		std::get<0>(v) = std::get<0>(v) + 1;
 		return v;
@@ -214,7 +208,7 @@ struct example_t : example_base_t {
 		return std::move(v);
 	}
 
-	lua_t::ref_t prime(lua_t lua) const {
+	lua_t::ref_t prime(lua_t lua) {
 		return lua.make_table([](lua_t lua) noexcept {
 			lua.set_current("name", "prime");
 			lua.set_current(1, 2);
@@ -300,7 +294,7 @@ int main(void) {
 
 	IRIS_ASSERT(lua.get_global<std::string>("fmt_string_lambda") == "hello world!");
 
-	lua.set_global("functor", [capture]() noexcept {
+	lua.set_global("functor", [capture]() mutable noexcept {
 		return capture;
 	});
 	int retcapture = lua.call<int>(lua.get_global<iris_lua_t::ref_t>("functor")).value();
