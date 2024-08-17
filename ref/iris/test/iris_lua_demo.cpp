@@ -231,10 +231,12 @@ struct example_t : example_base_t {
 		co_return;
 	}
 
-	iris::iris_coroutine_t<iris::iris_lua_t::optional_result_t<int>> mem_coro_get_int(std::string&& s) noexcept {
+	iris::iris_coroutine_t<iris::iris_lua_t::optional_result_t<int>> mem_coro_get_int(iris_lua_t&& t, std::string&& s) noexcept {
 		// co_return iris::iris_lua_t::result_error_t("test error 1");
+		iris_lua_t tt = t;
 		co_await iris::iris_switch(warpptr2);
 		co_await iris::iris_switch(warpptr);
+		tt.native_push_variable(1);
 		// co_return iris::iris_lua_t::result_error_t("test error 2");
 		co_return 2;
 	}
@@ -327,6 +329,17 @@ int main(void) {
 	lua_State* T = luaL_newstate();
 	luaL_openlibs(T);
 	lua_t target(T);
+
+	lua.native_push_variable([T](const char* text) mutable noexcept {
+		printf("No metatable %s\n", text);
+		return "no metatable";
+	});
+
+	lua.native_cross_transfer_variable<true>(target, -1);
+	auto f = target.native_get_variable<lua_t::ref_t>(-1);
+	target.native_pop_variable(1);
+	target.call<void>(std::move(f), "transferred!");
+
 	target.call<void>(target.load("\n\
 function test(a, b, c) \n\
 	b:base_func() \n\
@@ -483,12 +496,29 @@ end\n\
 	printf("Error message: %s\n", lua.load("err").message.c_str());
 
 #if USE_LUA_COROUTINE
+
+#if LUA_VERSION_NUM <= 501
+	// lua 5.1 do not accept yield from pcall
+	lua.call<void>(lua.load("\n\
+		local a = example_t.new()\n\
+		local coro = coroutine.create(function() \n\
+			print('coro get ' .. a.coro_get_int('hello')) \n\
+			local x1, x2 = a:mem_coro_get_int('world') \n\
+			print('memcoro get ' .. x1 .. ', ' .. x2) \n\
+			print('memcoro get second ' .. a:mem_coro_get_int('world')) \n\
+			print('memcoro get second ' .. a:mem_coro_get_int_raw('world')) \n\
+			a.coro_get_none()\n\
+			print('coro finished')\n\
+		end)\n\
+		coroutine.resume(coro)\n").value());
+#else
 	lua.call<void>(lua.load("\n\
 		local a = example_t.new()\n\
 		local coro = coroutine.create(function() \n\
 			local status, message = pcall(function() \n\
 			print('coro get ' .. a.coro_get_int('hello')) \n\
-			print('memcoro get ' .. a:mem_coro_get_int('world')) \n\
+			local x1, x2 = a:mem_coro_get_int('world') \n\
+			print('memcoro get ' .. x1 .. ', ' .. x2) \n\
 			print('memcoro get second ' .. a:mem_coro_get_int('world')) \n\
 			print('memcoro get second ' .. a:mem_coro_get_int_raw('world')) \n\
 			end) \n\
@@ -497,6 +527,7 @@ end\n\
 			print('coro finished')\n\
 		end)\n\
 		coroutine.resume(coro)\n").value());
+#endif
 
 	warp.yield();
 	worker.join();
